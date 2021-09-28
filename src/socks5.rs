@@ -7,7 +7,7 @@ use tokio::net::*;
 use std::net::{Ipv4Addr, SocketAddr};
 
 use std::io::Result;
-
+use std::sync::{Arc, Mutex};
 use crate::general::*;
 
 #[allow(dead_code)]
@@ -180,18 +180,18 @@ async fn read_response(input: &mut (dyn AsyncRW)) -> Result<Reply> {
     return Ok(Reply{ reptype: reply, addr: addr, port: port});
 } 
 
-/*
-async fn write_response(output: &mut (dyn AsyncRW)) -> Result<Reply> {
-    output.read_u8().await? != 0x5 {
-    let reply = ReplyType::to_num(input.read_u8().await?);
-    println!("reply type: {:?}", reply);
-    let rsv = input.read_u8().await?;
-    let addr = LinkAddr::read(input).await?; 
-    let mut port = input.read_u16().await?; 
-
-    return Ok(Reply{ reptype: reply, addr: addr, port: port});
+async fn send_response(input: &mut (dyn AsyncRW), reptype: ReplyType) -> Result<()> {
+    input.write_u8(0x5).await?;
+    input.write_u8(ReplyType::to_num(&reptype)).await?;
+    input.write_u8(0).await?;
+    
+    // Empty ip address. 
+    input.write_u8(1).await?;
+    input.write_u32(0).await?;
+    input.write_u16(0).await?;
+    
+    return Ok(()); 
 } 
-*/
 
 #[allow(dead_code)]
 async fn connect_socks5(link:&mut (dyn AsyncRW), req: LinkRequest) -> Result<()> {
@@ -207,9 +207,10 @@ async fn connect_socks5(link:&mut (dyn AsyncRW), req: LinkRequest) -> Result<()>
     return Ok(());
 }
 
+#[derive(Debug)]
 pub struct Socks5ChainNode {
     pub proxy_addr: SocketAddr, 
-    pub parent: Box<dyn ChainNode>
+    pub parent: Arc<dyn ChainNode>
 }
 
 #[async_trait]
@@ -218,42 +219,76 @@ impl ChainNode for Socks5ChainNode {
         // First connect to the proxy server through our parent node.
         let proxy_request = LinkRequest::from(self.proxy_addr);
         let mut stream = self.parent.connect(proxy_request).await?;
+        // Create a temporary BufStream. 
         connect_socks5(&mut stream, req).await?;
         return Ok(stream); 
     }
 }
 
+//NOTE: Maybe consider having a some sort of connection pool system ?
+struct Socks5ServerState {
+    pub chain: Arc<dyn ChainNode>
+}
+
 // --- Server Code ---
-async fn socks5_handle_connection(socket: &mut TcpStream) -> Result<()> {
-
-    // Read auth options.
-    read_options(socket).await?;
-
+async fn socks5_handle_connection(mut socket: TcpStream, server_state: &mut Arc<Socks5ServerState> ) -> Result<()> {
     //FIXME: Better handling of auth.
 
-    // Send auth response.
-    send_option(socket).await?;
+    // - Read auth options -
+    read_options(&mut socket).await?;
+    // - Send auth response - 
+    send_option(&mut socket).await?;
 
-    // Read request.
-    let _link_req = read_request(socket).await?;
+    // - Read request -
+    let link_req = read_request(&mut socket).await?;
     
-    // Connect to the address through the chain.
-        
+    // - Connect to the address through the chain. -
+    //NOTE: Failure to connect is not a protocol/client error.
+    // we should send a response if we fail. 
+    let con_result = server_state.chain.connect(link_req).await; 
+    let response_type = match con_result {
+        Ok(_) => ReplyType::Succeeded,
+        Err(_) => ReplyType::GeneralFailure
+    };
+
     // Write response. 
+    send_response(&mut socket, response_type).await?;
+    
+    if con_result.is_err() {
+        // We sent the error response, so this is ok.
+        return Ok(());
+    } 
+
+    let (mut con_read, mut con_write) = con_result.unwrap().split();    
+    let (mut sock_read, mut sock_write) = socket.split();    
+
+    // Start copying in both directions.
+    let (up_copy, down_copy) = tokio::join!(
+            copy(&mut sock_read, &mut con_write),
+             copy(&mut con_read, &mut sock_write));
+
+    up_copy?;
+    down_copy?;
+
 
     return Ok(());
 }
 
 async fn socks5_server(config: Yaml) {
     let address : SocketAddr = config["addr"].as_str().unwrap().parse().unwrap();
+    let chain_config  = config["chain"].as_vec().unwrap();
+    let chain = load_chain(chain_config);
+
     let listener = TcpListener::bind(address).await.unwrap(); 
     println!("[SOCKS5 Server] Listening"); 
 
+    let mut server_state = Arc::new(Socks5ServerState { chain: chain });
     loop {
-        let (mut socket, _) = listener.accept().await.unwrap();
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut handle = server_state.clone();
         println!("[SOCKS5 Server] Accepted a connection");
         tokio::spawn(async move {
-            socks5_handle_connection(&mut socket).await;
+            socks5_handle_connection(socket, &mut handle).await;
         });
     }
 }
