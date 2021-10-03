@@ -7,7 +7,7 @@ use tokio::net::*;
 use std::net::{Ipv4Addr, SocketAddr};
 
 use std::io::Result;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use crate::general::*;
 
 #[allow(dead_code)]
@@ -24,6 +24,10 @@ enum ReplyType {
 
 //FIXME: Calling write/read ... functions directly is very inefficient we should use a buffer
 //       instead, but we can't just use a BufferedStream in TcpChain node.
+
+//NOTE:  Maybe we can use a buffered stream on read side only and encode the packets to vectors
+//       before sending them. 
+
 
 #[allow(dead_code)]
 impl ReplyType {
@@ -54,7 +58,7 @@ impl ReplyType {
 }
 
 impl LinkAddr {
-    async fn write(&self, output: &mut (dyn AsyncRW)) -> Result<()> {
+    async fn write(&self, output: &mut (dyn AsyncW)) -> Result<()> {
         match &self {
             LinkAddr::IPv4(addr) => { 
                 output.write_u8(0x01).await?; // Addr type.
@@ -76,7 +80,7 @@ impl LinkAddr {
         return Ok(());
     }
 
-    async fn read(read: &mut (dyn AsyncRW)) -> Result<LinkAddr> {
+    async fn read(read: &mut (dyn AsyncR)) -> Result<LinkAddr> {
         let addr_type:u8 = read.read_u8().await?;
         match addr_type {
             1 => { // ipv4 addr
@@ -92,7 +96,7 @@ impl LinkAddr {
             }
             // TODO: Implement IPv6  
             _ => {
-                return Err(Error::new(ErrorKind::InvalidData, "Unknown/Unsuported addr type"));
+                return Err(Error::new(ErrorKind::InvalidData, "Unknown/Unsupported addr type"));
             }
         }
     }
@@ -106,8 +110,9 @@ struct Reply {
 }
 
 // Encode the auth option packet.
+// Client only
 #[allow(dead_code)]
-async fn send_option(output: &mut (dyn AsyncRW)) -> Result<()> {
+async fn send_option(output: &mut (dyn AsyncW)) -> Result<()> {
     let version: u8 = 0x5;
     output.write_u8(version).await?;
     // We only support no login.
@@ -118,18 +123,32 @@ async fn send_option(output: &mut (dyn AsyncRW)) -> Result<()> {
     return Ok(());
 }
 
-async fn read_options(input: &mut (dyn AsyncRW)) -> Result<Vec<u8>> {
+// Server only
+async fn read_options(input: &mut (dyn AsyncR)) -> Result<Vec<u8>> {
+    let version = input.read_u8().await?; 
+    if version != 0x5 {
+        println!("Incorrect version: {:?}", version);
+        return Err(Error::new(ErrorKind::Unsupported, "Unsupported SOCKS Version."));
+    } 
+
+
+
     let count = input.read_u8().await?;
-    let mut result = Vec::<u8>::new();
-    result.reserve(count as usize);
-    input.read_exact(&mut result).await?;
-    return Ok(result); 
+    println!("Count: {:?}", count);
+    let mut options = vec![0u8; count as usize];
+    input.read_exact(&mut options).await?;
+    println!("Options vector: {:?}", options);
+
+    return Ok(options);
 }
 
+// Client only.
 #[allow(dead_code)]
-async fn read_auth_response(link: &mut (dyn AsyncRW)) -> Result<()> {
-    if link.read_u8().await? != 0x5 {
-        return Err(Error::new(ErrorKind::Unsupported, "Unsuported SOCKS Version."));
+async fn read_auth_response(link: &mut (dyn AsyncR)) -> Result<()> {
+    let version = link.read_u8().await?; 
+    if version != 0x5 {
+        println!("Incorrect version: {:?}", version);
+        return Err(Error::new(ErrorKind::Unsupported, "Unsupported SOCKS Version."));
     } else if link.read_u8().await? != 0 {
         return Err(Error::new(ErrorKind::PermissionDenied, "Auth failed."));
     }
@@ -137,9 +156,18 @@ async fn read_auth_response(link: &mut (dyn AsyncRW)) -> Result<()> {
     return Ok(()); 
 }   
 
+
+// Server only
+async fn send_auth_response(output: &mut (dyn AsyncW)) -> Result<()> {
+    output.write_u8(0x5).await?;
+    output.write_u8(0x0).await?;
+    return Ok(());
+} 
+
 // TODO: Send UDP Requests too   
+// Client only.
 #[allow(dead_code)]
-async fn send_request(output: &mut (dyn AsyncRW), req: LinkRequest) -> Result<()> {
+async fn send_request(output: &mut (dyn AsyncW), req: LinkRequest) -> Result<()> {
     let version: u8 = 0x5;
     output.write_u8(version).await?;
     output.write_u8(0x01).await?; // Connect
@@ -152,10 +180,14 @@ async fn send_request(output: &mut (dyn AsyncRW), req: LinkRequest) -> Result<()
     return Ok(()); 
 }
 
-async fn read_request(input: &mut (dyn AsyncRW)) -> Result<LinkRequest> {
-    if input.read_u8().await? != 0x5 {
+// Server only.
+async fn read_request(input: &mut (dyn AsyncR)) -> Result<LinkRequest> {
+    let version = input.read_u8().await?; 
+    if version != 0x5 {
+        println!("REQ Incorrect protocol version {:?}", version);
         return Err(Error::new(ErrorKind::Unsupported, "Unsuported SOCKS Version."));
-    } 
+    }
+ 
     let req_type = input.read_u8().await?; 
     if req_type != 1 {
         return Err(Error::new(ErrorKind::Unsupported, "Only CONNECT request type is supported."));
@@ -167,7 +199,8 @@ async fn read_request(input: &mut (dyn AsyncRW)) -> Result<LinkRequest> {
     return Ok(LinkRequest { addr: link_addr, port: port});
 }
 
-async fn read_response(input: &mut (dyn AsyncRW)) -> Result<Reply> {
+//Client only
+async fn read_response(input: &mut (dyn AsyncR)) -> Result<Reply> {
     if input.read_u8().await? != 0x5 {
         return Err(Error::new(ErrorKind::InvalidData, "Incorrect protocol version"));
     }
@@ -180,7 +213,8 @@ async fn read_response(input: &mut (dyn AsyncRW)) -> Result<Reply> {
     return Ok(Reply{ reptype: reply, addr: addr, port: port});
 } 
 
-async fn send_response(input: &mut (dyn AsyncRW), reptype: ReplyType) -> Result<()> {
+//Server only
+async fn send_response(input: &mut (dyn AsyncW), reptype: ReplyType) -> Result<()> {
     input.write_u8(0x5).await?;
     input.write_u8(ReplyType::to_num(&reptype)).await?;
     input.write_u8(0).await?;
@@ -194,15 +228,15 @@ async fn send_response(input: &mut (dyn AsyncRW), reptype: ReplyType) -> Result<
 } 
 
 #[allow(dead_code)]
-async fn connect_socks5(link:&mut (dyn AsyncRW), req: LinkRequest) -> Result<()> {
+async fn connect_socks5(link:&mut StreamPair, req: LinkRequest) -> Result<()> {
     println!("sending auth options");
-    send_option(link).await?;
+    send_option(&mut link.write).await?;
     println!("reading auth response");
-    read_auth_response(link).await?;
+    read_auth_response(&mut link.read).await?;
     println!("sending request"); 
-    send_request(link, req).await?;
+    send_request(&mut link.write, req).await?;
     println!("reading response");
-    read_response(link).await?;
+    read_response(&mut link.read).await?;
 
     return Ok(());
 }
@@ -215,7 +249,7 @@ pub struct Socks5ChainNode {
 
 #[async_trait]
 impl ChainNode for Socks5ChainNode {
-    async fn connect(&self, req: LinkRequest) -> Result<Box<dyn AsyncRW>> {
+    async fn connect(&self, req: LinkRequest) -> Result<StreamPair> {
         // First connect to the proxy server through our parent node.
         let proxy_request = LinkRequest::from(self.proxy_addr);
         let mut stream = self.parent.connect(proxy_request).await?;
@@ -232,12 +266,10 @@ struct Socks5ServerState {
 
 // --- Server Code ---
 async fn socks5_handle_connection(mut socket: TcpStream, server_state: &mut Arc<Socks5ServerState> ) -> Result<()> {
-    //FIXME: Better handling of auth.
-
     // - Read auth options -
     read_options(&mut socket).await?;
     // - Send auth response - 
-    send_option(&mut socket).await?;
+    send_auth_response(&mut socket).await?;
 
     // - Read request -
     let link_req = read_request(&mut socket).await?;
@@ -251,6 +283,10 @@ async fn socks5_handle_connection(mut socket: TcpStream, server_state: &mut Arc<
         Err(_) => ReplyType::GeneralFailure
     };
 
+    if con_result.is_err() {
+        println!("Connection request to chain failed.");
+    }
+
     // Write response. 
     send_response(&mut socket, response_type).await?;
     
@@ -258,37 +294,47 @@ async fn socks5_handle_connection(mut socket: TcpStream, server_state: &mut Arc<
         // We sent the error response, so this is ok.
         return Ok(());
     } 
+    let mut con = con_result.unwrap();
 
-    let (mut con_read, mut con_write) = con_result.unwrap().split();    
     let (mut sock_read, mut sock_write) = socket.split();    
 
     // Start copying in both directions.
     let (up_copy, down_copy) = tokio::join!(
-            copy(&mut sock_read, &mut con_write),
-             copy(&mut con_read, &mut sock_write));
+            copy(&mut sock_read, &mut con.write),
+             copy(&mut con.read, &mut sock_write));
 
+    // Handle errors.
     up_copy?;
     down_copy?;
-
 
     return Ok(());
 }
 
-async fn socks5_server(config: Yaml) {
+pub async fn socks5_server(config: &Yaml) {
+    println!("Initializing socks5 server");
+
+
     let address : SocketAddr = config["addr"].as_str().unwrap().parse().unwrap();
-    let chain_config  = config["chain"].as_vec().unwrap();
+    let chain_config  = config["nodes"].as_vec().unwrap();
     let chain = load_chain(chain_config);
+    println!("Chain loading complete");
+
 
     let listener = TcpListener::bind(address).await.unwrap(); 
     println!("[SOCKS5 Server] Listening"); 
 
-    let mut server_state = Arc::new(Socks5ServerState { chain: chain });
-    loop {
-        let (socket, _) = listener.accept().await.unwrap();
-        let mut handle = server_state.clone();
-        println!("[SOCKS5 Server] Accepted a connection");
-        tokio::spawn(async move {
-            socks5_handle_connection(socket, &mut handle).await;
-        });
-    }
+    tokio::spawn(async move {
+        let server_state = Arc::new(Socks5ServerState { chain: chain });
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut handle = server_state.clone();
+            println!("[SOCKS5 Server] Accepted a connection");
+            tokio::spawn(async move {
+                let result = socks5_handle_connection(socket, &mut handle).await;
+
+                println!("Connection Terminated {:?}", result); 
+
+            });
+        }
+    }).await;
 }

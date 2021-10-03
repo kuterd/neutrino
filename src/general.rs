@@ -10,8 +10,20 @@ use yaml_rust::yaml::Array;
 
 use crate::socks5::*; 
 
+pub trait AsyncW: AsyncWrite + Unpin + Send {}
+impl<T> AsyncW for T where T: AsyncWrite + Unpin + Send {}
+
+pub trait AsyncR: AsyncRead + Unpin + Send {}
+impl<T> AsyncR for T where T: AsyncRead + Unpin + Send {}
+
 pub trait AsyncRW: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T> AsyncRW for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
+
+// We need this because we can't combine two unrelated streams together.
+pub struct StreamPair {
+    pub read: Box<dyn AsyncR>,
+    pub write: Box<dyn AsyncW>
+}
 
 // Standart information about a chain node.
 #[derive(Debug)]
@@ -27,7 +39,8 @@ pub struct ChainNodeInfo {
 pub enum LinkAddr {
     IPv4(Ipv4Addr),
     IPv6(Ipv6Addr),
-    Domain(Vec<u8>)
+    Domain(Vec<u8>),
+    UNKNOWN()
 }
 
 #[allow(dead_code)]
@@ -69,9 +82,12 @@ impl From<SocketAddr> for LinkRequest {
     }
 }
 
+
+
 #[async_trait]
 pub trait ChainNode: Send + Sync + Debug {
-    async fn connect(&self, req: LinkRequest) -> Result<Box<dyn AsyncRW>>;
+    // Open a connection for the given link request.
+    async fn connect(&self, req: LinkRequest) -> Result<StreamPair>;
 }
 
 #[derive(Debug)]
@@ -81,12 +97,13 @@ pub struct TcpChainNode {
 
 #[async_trait]
 impl ChainNode for TcpChainNode {
-    async fn connect(&self, req: LinkRequest) -> Result<Box<dyn AsyncRW>> {
-       let stream = TcpStream::connect(req.as_socket_addr().await?).await?;
 //       Sadly, we can't use a buffered stream here.
 //       I will eventually fix this limitation.
 //       return Ok(Box::<BufStream<TcpStream>>::new(BufStream::new(stream)));
-       return Ok(Box::new(stream));
+    async fn connect(&self, req: LinkRequest) -> Result<StreamPair> {
+       let stream = Box::new(TcpStream::connect(req.as_socket_addr().await?).await?);
+       let (read, write) = stream.into_split();
+       return Ok(StreamPair {read: Box::new(read), write: Box::new(write)});
     }
 }
 
@@ -100,13 +117,13 @@ pub fn load_chain(chain: &Array) -> Arc<dyn ChainNode> {
             name = Some(st.to_string());
         }
 
+        println!("name: {:?}", name);
         let node_info = ChainNodeInfo { name: name,  parent: parent.clone() };
+        let n_type = node["type"].as_str()
+            .expect("expected a 'type' for the chain node");
+        println!("Node type: {}", n_type);
 
-        let n_type = &node["type"];
-        println!("Node type: {}", n_type.as_str().unwrap());
-        
-        // Consider doing this with some macro magic.
-        match n_type.as_str().unwrap() {
+        match n_type {
             "socks5" => {
                 assert!(parent.is_some(), "socks5 node must not be the first node in the chain!");
                 let addr = node["addr"].as_str().unwrap().parse().unwrap();
@@ -122,6 +139,5 @@ pub fn load_chain(chain: &Array) -> Arc<dyn ChainNode> {
             }
         }
     }
-    println!("Chain {:?}", parent);
     return parent.unwrap();
 }

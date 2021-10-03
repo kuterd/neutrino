@@ -1,46 +1,41 @@
 //extern crate yaml_rust;
 extern crate tokio;
 
-use yaml_rust::YamlLoader;
+use yaml_rust::{YamlLoader, Yaml};
 use std::fs;
 
-use tokio::io::*;
+//use tokio::io::*;
 
 mod general;
 mod socks5;
 
-
 use crate::general::*;
-use crate::socks5::*;
+use crate::socks5::socks5_server;
 
-
-/*
-async fn run() {
-    let tcp_node = Box::new(TcpChainNode {});
-    let node = Socks5ChainNode {parent: tcp_node, proxy_addr: "127.0.0.1:9050".parse().unwrap()};
-    let req = LinkRequest {addr: LinkAddr::Domain("google.com".as_bytes().to_vec()), port: 80};   
-    let mut conn = node.connect(req).await.unwrap();
-    println!("connected"); 
-    conn.write_all("GET / HTTP/1.1\r\nHost: google.com\r\n\r\n".as_bytes()).await.unwrap();
-    conn.flush().await.unwrap();
-    println!("header sent");
-    loop {
-        let b = conn.read_u8().await;
-        if !b.is_ok() {
-            break; 
-        }
-        print!("{}", b.unwrap() as char);
+// Initialize all chains.
+async fn materialize_chains(config: &Vec<Yaml>) {
+    for chain in config {
+        let node_type = chain["type"].as_str()
+            .expect("Expected a 'type' for chain"); 
+        
+        println!("Constructing chain node: {:?}", node_type);
+        // Create the appropriate type 
+        match node_type {
+            "socks5_server" => {
+                socks5_server(chain).await; 
+            }
+            _ => {
+                panic!("Unknwon chain type");
+            }
+        } 
     }
-    println!("DONE");
 }
-*/
 
 #[tokio::main]
 async fn main() {
     let config_str = fs::read_to_string("config.yaml")
         .expect("Failed to read the config file"); 
-    let config = &YamlLoader::load_from_str(&config_str).unwrap()[0];
-    let chain = &config["chain"].as_vec().unwrap();
-
-    load_chain(&chain);
+    let config = &YamlLoader::load_from_str(&config_str)
+        .expect("Failed to parse the config");
+    materialize_chains(&config[0].as_vec().expect("expected chain array")).await;
 }
