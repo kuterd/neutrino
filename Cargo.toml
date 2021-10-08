@@ -1,5 +1,5 @@
 [package]
-name = "neutron"
+name = "neutrino"
 version = "0.0.1"
 authors = ["Kuter Dinel"]
 edition = "2018"
