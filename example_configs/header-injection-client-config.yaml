@@ -1,0 +1,17 @@
+- name: "Neutrino HTTP header injection client"
+  # Listen to the localhost only
+  addr: "127.0.0.1:9051"
+  input:
+    - name: "Local Socks5 Handler"
+      type: "socks5_server"
+  output:
+    - name: "tcp connection"
+      type: "tcp"
+    # Header injection in the output side will inject bytes.
+    - name: "Header Injection"
+      type: "header_injector"
+      # Must _exactly_ match your sever config !!
+      injection: "GET / HTTP/1.1\r\nHost:www.google.com\r\n\r\n" 
+    - type: "socks5"
+      # Replace this with your server's ip address.
+      addr: "123.123.123.123:9052"

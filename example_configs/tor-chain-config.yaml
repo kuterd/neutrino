@@ -1,0 +1,16 @@
+- name: "Proxy over TOR"
+  # Listen to the localhost only
+  # this is the address that you will point your local applications to.
+  addr: "127.0.0.1:9051"
+  input:
+    - name: "Local Socks5 Handler"
+      type: "socks5_server"
+  output:
+    - name: "tcp connection"
+      type: "tcp"
+    - type: "socks5"
+    # TOR's local SOCKS5 Server 
+      addr: "127.0.0.1:9050"
+    - type: "socks5"
+    # Proxy server to route your traffic over. 
+      addr: "123.123.123.124:9052"

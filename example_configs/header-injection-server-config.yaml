@@ -1,0 +1,18 @@
+- name: "Neutrino HTTP header injetion server"
+  # Listen to the external network.
+  addr: "0.0.0.0:9052"
+  input:
+    # After junk bytes are stripped away we will parse the SOCKS protocol. 
+   - name: "Socks5 Handler"
+     type: "socks5_server"
+    # Header injection in the input side will strip away junk bytes.
+   - name: "Header Injection"
+     type: "header_injector"
+     # This must _exactly_ match your client config.
+     injection: "GET / HTTP/1.1\r\nHost:www.google.com\r\n\r\n" 
+  output:
+    # Requests will be just routed to the internet.
+    # If you want you can route it to a regular SOCKS5 server
+    # such as a the local server of the Tor server.
+    - name: "TCP Connection"
+      type: "tcp"

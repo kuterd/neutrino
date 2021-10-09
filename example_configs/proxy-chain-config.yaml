@@ -1,0 +1,24 @@
+# WARNING: This is meant as a demonstration only, proxy chaining is not very safe 
+#  to hide your identity, please use Tor instead for better security.
+
+- name: "Proxy Chain"
+  # Listen to the localhost only
+  addr: "127.0.0.1:9051"
+  input:
+    - name: "Local Socks5 Handler"
+      type: "socks5_server"
+  output:
+    - name: "tcp connection"
+      type: "tcp"
+    - type: "socks5"
+    # First server
+      addr: "123.123.123.123:9052"
+    - type: "socks5"
+    # Second server
+      addr: "123.123.123.124:9052"
+    - type: "socks5"
+    # Third server
+      addr: "123.123.123.125:9052"
+    - type: "socks5"
+    # fourth server
+      addr: "123.123.123.126:9052"
