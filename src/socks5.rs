@@ -14,7 +14,6 @@ use crate::general::*;
 //NOTE:  Maybe we can use a buffered stream on read side only and encode the packets to vectors
 //       before sending them.
 
-#[allow(dead_code)]
 impl ReplyType {
     // find if there is a better way of doing this.
     fn from_num(num: u8) -> ReplyType {
@@ -128,7 +127,6 @@ async fn read_options(input: &mut (dyn AsyncR)) -> Result<Vec<u8>> {
 }
 
 // Client only.
-#[allow(dead_code)]
 async fn read_auth_response(link: &mut (dyn AsyncR)) -> Result<()> {
     let version = link.read_u8().await?;
     if version != 0x5 {
@@ -151,7 +149,6 @@ async fn send_auth_response(output: &mut (dyn AsyncW)) -> Result<()> {
 
 // TODO: Send UDP Requests too
 // Client only.
-#[allow(dead_code)]
 async fn send_request(output: &mut (dyn AsyncW), req: LinkRequest) -> Result<()> {
     let version: u8 = 0x5;
     output.write_u8(version).await?;
@@ -215,7 +212,6 @@ async fn send_response(input: &mut (dyn AsyncW), reptype: ReplyType) -> Result<(
     return Ok(());
 }
 
-#[allow(dead_code)]
 async fn connect_socks5(link:&mut StreamPair, req: LinkRequest) -> Result<()> {
     println!("[SOCKS5 Client] sending auth options");
     send_option(&mut link.write).await?;

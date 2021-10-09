@@ -40,8 +40,8 @@ pub struct StreamPair {
 
 // Address of a connection
 // std::net::SocketAddr can not represent a domain address.
-#[allow(dead_code)]
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum LinkAddr {
     IPv4(Ipv4Addr),
     IPv6(Ipv6Addr),
@@ -49,7 +49,6 @@ pub enum LinkAddr {
     Unknown()
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct LinkRequest {
     pub addr: LinkAddr,
@@ -280,7 +279,7 @@ impl ChainSet {
         let copy = self.clone();
         tokio::spawn(async move {
             //FIXME: Error here shouldn't crash the server.
-            return copy.run_internal().await;
+            let _ = copy.run_internal().await;
         }).await?;
         return Ok(());
     }
