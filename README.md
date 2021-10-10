@@ -38,9 +38,10 @@ This is a simple configuration that allows that.
 
 ### Proxy chaining
 
-You can have multiple `socks5` nodes in your input chain to route your traffic through multiple proxy servers.
-Note: Proxy chaining is not very safe. Since the SOCKS5 protocol doesn't have any encryption the first proxy
-server in your chain can read your traffic.    
+![Neutrino proxy chaining diagram](https://github.com/kuterd/neutrino/blob/master/branding/neutrino_chain_explained.png?raw=true)
+
+You can have multiple `socks5` nodes in your input chain to route your traffic through multiple proxy servers. 
+Note: Proxy chaining is not very safe. Since the SOCKS5 protocol doesn't have any encryption the first proxy server in your chain can read your traffic.    
 
 ### Socks5 with TLS (WIP)
 
