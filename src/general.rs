@@ -65,9 +65,24 @@ impl LinkRequest {
             LinkAddr::IPv6(ip) => {
                 return Ok(SocketAddr::new(IpAddr::V6(*ip), self.port));
             }
-            //TODO: Implement DNS lookups.
-            LinkAddr::Domain(_domain) => {
-                return Err(Error::new(ErrorKind::InvalidData, "Domain type is not supported for now"));
+            LinkAddr::Domain(domain) => {
+                let dstr_res = std::str::from_utf8(domain);
+                if let Err(_err) = dstr_res {
+                    return Err(Error::new(ErrorKind::InvalidData, "Invalid Domain"));
+                }
+                let dstr = dstr_res.unwrap();  
+
+                if dstr.contains(":") {
+                    return Err(Error::new(ErrorKind::InvalidData, "Invalid Domain"));
+                }
+
+                //NOTE: This is a hack, consider finding a better solution.
+                let addr = lookup_host(String::from(dstr) + ":123").await?.next();
+                if let Some(saddr) = addr {
+                    return Ok(SocketAddr::new(saddr.ip(), self.port));
+                } 
+                
+                return Err(Error::new(ErrorKind::InvalidData, "Domain lookup failed"));
             }
             _ => {
                 return Err(Error::new(ErrorKind::InvalidData, "Unknown address "));
@@ -125,7 +140,6 @@ pub trait InputChainNode: Send + Sync + Debug {
     async fn handle_connection(&self, stream: &mut StreamPair) -> Result<LinkRequest>;
     async fn send_response(&self, stream: &mut StreamPair, reply: ReplyType) -> Result<()>;
 }
-
 
 fn load_input_chain(chain: &Array) -> Arc<dyn InputChainNode> {
     println!("[Input Chain Loader] Loading input chain");
@@ -270,6 +284,11 @@ impl ChainSet {
                 let (_up_copy, _down_copy) = tokio::join!(
                     copy(&mut stream.read, &mut con.write),
                      copy(&mut con.read, &mut stream.write));
+                
+                // We are finished, shutdown the connections.
+                let _s = stream.write.shutdown();
+                let _c = con.write.shutdown();
+                println!("[TCP Server] Connections are shutdown");
                 return;
             });
         }
@@ -278,7 +297,6 @@ impl ChainSet {
     pub async fn run(&self) -> Result<()> {
         let copy = self.clone();
         tokio::spawn(async move {
-            //FIXME: Error here shouldn't crash the server.
             let _ = copy.run_internal().await;
         }).await?;
         return Ok(());
